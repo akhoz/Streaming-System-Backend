@@ -19,7 +19,7 @@ OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
 # -------------------------------
 # 🎬 Conversión de videos
 # -------------------------------
-@router.post("/video")
+@router.api_route("/video", methods=["GET", "POST"])
 def convertir_video(
     filename: str = Query(..., description="Nombre del archivo de video existente"),
     formato: str = Query(..., description="Formato de salida (mp4 o mov)"),
@@ -70,7 +70,7 @@ def convertir_video(
 # -------------------------------
 # 🎵 Conversión de audios
 # -------------------------------
-@router.post("/audio")
+@router.api_route("/audio", methods=["GET", "POST"])
 def convertir_audio(
     filename: str = Query(..., description="Nombre del archivo de audio existente"),
     formato: str = Query(..., description="Formato de salida (mp3 o wav)"),
