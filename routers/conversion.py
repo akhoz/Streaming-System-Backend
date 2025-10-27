@@ -1,12 +1,12 @@
 from fastapi import APIRouter, HTTPException, Query, Path
 from fastapi.responses import FileResponse, JSONResponse
-from pathlib import Path
+from pathlib import Path as FilePath
 from pydantic import BaseModel
 from typing import Optional, Dict, Any
 from services.conversion_manager import ConversionManager
 
 router = APIRouter()
-BASE_DIR = Path(__file__).resolve().parent.parent
+BASE_DIR = FilePath(__file__).resolve().parent.parent
 manager = ConversionManager(BASE_DIR)
 
 # =========================
