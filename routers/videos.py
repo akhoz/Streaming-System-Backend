@@ -1,5 +1,5 @@
 from fastapi import APIRouter, HTTPException, Request, Path
-from fastapi.responses import StreamingResponse, JSONResponse
+from fastapi.responses import StreamingResponse, JSONResponse, FileResponse
 from pydantic import BaseModel
 from typing import List
 import os
@@ -36,16 +36,8 @@ class ErrorResponse(BaseModel):
 @router.get(
     "/",
     response_model=VideoListResponse,
-    responses={
-        200: {"description": "Lista de videos disponibles"},
-        404: {"model": ErrorResponse, "description": "Carpeta no encontrada"},
-        500: {"model": ErrorResponse, "description": "Error interno"},
-    },
     summary="Lista todos los videos disponibles",
-    description="""
-Devuelve una lista con los archivos de video disponibles en el servidor.  
-Incluye el nombre, tipo MIME y tamaño (en MB) de cada archivo.
-""",
+    description="Devuelve todos los videos almacenados en el servidor, con nombre, tipo MIME y tamaño (MB).",
 )
 def listar_videos():
     try:
@@ -70,8 +62,6 @@ def listar_videos():
 
         return {"videos": files}
 
-    except HTTPException:
-        raise
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
@@ -82,63 +72,81 @@ def listar_videos():
 @router.get(
     "/{filename}",
     responses={
-        200: {"description": "Devuelve el video por streaming"},
-        206: {"description": "Entrega parcial (streaming)"},
-        404: {"model": ErrorResponse, "description": "Archivo no encontrado"},
-        500: {"model": ErrorResponse, "description": "Error interno"},
+        200: {"description": "Streaming de video"},
+        404: {"model": ErrorResponse},
     },
     summary="Reproduce un video específico por streaming",
-    description="""
-Devuelve el archivo de video en formato de transmisión (HTTP Range).  
-Permite que el cliente reproduzca el video en tiempo real sin descargarlo completamente.
-""",
+    description="Permite ver un video directamente desde el navegador sin descargarlo completamente.",
 )
 def stream_video(
-    filename: str = Path(
-        ..., description="Nombre exacto del archivo de video (ej: pelicula.mp4)"
-    ),
-    request: Request = None,
+    filename: str = Path(..., description="Nombre del video"), request: Request = None
 ):
-    try:
-        file_path = os.path.join(VIDEO_DIR, filename)
-        if not os.path.exists(file_path):
-            raise HTTPException(status_code=404, detail="Archivo no encontrado")
+    file_path = os.path.join(VIDEO_DIR, filename)
 
-        file_size = os.path.getsize(file_path)
-        range_header = request.headers.get("range") if request else None
-        media_type, _ = mimetypes.guess_type(file_path)
-        media_type = media_type or "video/mp4"
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
 
-        def iterfile(start=0, end=None):
-            with open(file_path, "rb") as f:
-                f.seek(start)
-                remaining = end - start if end else file_size - start
-                while remaining > 0:
-                    chunk_size = 1024 * 1024  # 1MB
-                    chunk = f.read(min(chunk_size, remaining))
-                    if not chunk:
-                        break
-                    yield chunk
-                    remaining -= len(chunk)
+    file_size = os.path.getsize(file_path)
+    range_header = request.headers.get("range")
+    media_type, _ = mimetypes.guess_type(file_path)
+    media_type = media_type or "video/mp4"
 
-        if range_header:
-            start, end = range_header.replace("bytes=", "").split("-")
-            start = int(start)
-            end = int(end) if end else file_size - 1
-            headers = {
-                "Content-Range": f"bytes {start}-{end}/{file_size}",
-                "Accept-Ranges": "bytes",
-            }
-            return StreamingResponse(
-                iterfile(start, end + 1),
-                status_code=206,
-                headers=headers,
-                media_type=media_type,
-            )
+    def iterfile(start=0, end=None):
+        with open(file_path, "rb") as f:
+            f.seek(start)
+            remaining = end - start if end else file_size - start
+            while remaining > 0:
+                chunk_size = 1024 * 1024
+                chunk = f.read(min(chunk_size, remaining))
+                if not chunk:
+                    break
+                yield chunk
+                remaining -= len(chunk)
 
-        return StreamingResponse(iterfile(), media_type=media_type)
+    if range_header:
+        start, end = range_header.replace("bytes=", "").split("-")
+        start = int(start)
+        end = int(end) if end else file_size - 1
+        headers = {
+            "Content-Range": f"bytes {start}-{end}/{file_size}",
+            "Accept-Ranges": "bytes",
+        }
+        return StreamingResponse(
+            iterfile(start, end + 1),
+            status_code=206,
+            headers=headers,
+            media_type=media_type,
+        )
 
-    except HTTPException:
-        raise
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    return StreamingResponse(iterfile(), media_type=media_type)
+
+
+# ============================
+# 💾 DESCARGAR VIDEO DIRECTAMENTE
+# ============================
+@router.get(
+    "/download/{filename}",
+    responses={
+        200: {"description": "Devuelve el archivo de video para descarga"},
+        404: {"model": ErrorResponse, "description": "Archivo no encontrado"},
+    },
+    summary="Descarga un video directamente",
+    description="Devuelve el archivo solicitado en formato descargable (Content-Disposition: attachment).",
+)
+def descargar_video(
+    filename: str = Path(..., description="Nombre del video a descargar"),
+):
+    file_path = os.path.join(VIDEO_DIR, filename)
+
+    if not os.path.exists(file_path):
+        raise HTTPException(status_code=404, detail="Archivo no encontrado")
+
+    media_type, _ = mimetypes.guess_type(file_path)
+    media_type = media_type or "video/mp4"
+
+    return FileResponse(
+        path=file_path,
+        filename=filename,
+        media_type=media_type,
+        headers={"Content-Disposition": f"attachment; filename={filename}"},
+    )
