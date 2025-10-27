@@ -14,13 +14,16 @@ AUDIO_DIR = os.path.join(os.path.dirname(__file__), "..", "content", "audios")
 # 📘 MODELOS PARA DOCUMENTACIÓN
 # ============================
 
+
 class AudioItem(BaseModel):
     nombre: str
     tipo: str
     tamaño_MB: float
 
+
 class AudioListResponse(BaseModel):
     audios: List[AudioItem]
+
 
 class ErrorResponse(BaseModel):
     detail: str
@@ -46,7 +49,9 @@ Incluye el nombre, el tipo MIME y el tamaño (en MB) de cada archivo.
 def listar_audios():
     try:
         if not os.path.exists(AUDIO_DIR):
-            raise HTTPException(status_code=404, detail="Carpeta de audios no encontrada")
+            raise HTTPException(
+                status_code=404, detail="Carpeta de audios no encontrada"
+            )
 
         files = []
         for f in os.listdir(AUDIO_DIR):
@@ -54,7 +59,13 @@ def listar_audios():
                 file_path = os.path.join(AUDIO_DIR, f)
                 media_type, _ = mimetypes.guess_type(file_path)
                 size_mb = round(os.path.getsize(file_path) / (1024 * 1024), 2)
-                files.append({"nombre": f, "tipo": media_type or "audio/mpeg", "tamaño_MB": size_mb})
+                files.append(
+                    {
+                        "nombre": f,
+                        "tipo": media_type or "audio/mpeg",
+                        "tamaño_MB": size_mb,
+                    }
+                )
 
         return {"audios": files}
 
@@ -82,7 +93,9 @@ Esto permite que el cliente reproduzca el audio en tiempo real sin descargarlo c
 """,
 )
 def stream_audio(
-    filename: str = Path(..., description="Nombre exacto del archivo de audio (ej: cancion.mp3)"),
+    filename: str = Path(
+        ..., description="Nombre exacto del archivo de audio (ej: cancion.mp3)"
+    ),
     request: Request = None,
 ):
     try:
@@ -125,3 +138,6 @@ def stream_audio(
         return StreamingResponse(iterfile(), media_type=media_type)
 
     except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
