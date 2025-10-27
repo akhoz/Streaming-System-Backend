@@ -1,111 +1,72 @@
 from fastapi import APIRouter, HTTPException, Query
-from fastapi.responses import JSONResponse
-import subprocess
-import os
+from fastapi.responses import FileResponse, JSONResponse
 from pathlib import Path
+from services.conversion_manager import ConversionManager
 
 router = APIRouter()
-
-# Directorios
 BASE_DIR = Path(__file__).resolve().parent.parent
-VIDEO_DIR = BASE_DIR / "content" / "videos"
-AUDIO_DIR = BASE_DIR / "content" / "audios"
-OUTPUT_DIR = BASE_DIR / "content" / "converted"
-
-# Crear carpeta de salida si no existe
-OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+manager = ConversionManager(BASE_DIR)
 
 
 # -------------------------------
-# 🎬 Conversión de videos
+# 🚀 Iniciar conversión
 # -------------------------------
-@router.api_route("/video", methods=["GET", "POST"])
-def convertir_video(
-    filename: str = Query(..., description="Nombre del archivo de video existente"),
-    formato: str = Query(..., description="Formato de salida (mp4 o mov)"),
+@router.post("/{tipo}")
+def iniciar_conversion(
+    tipo: str,
+    filename: str = Query(..., description="Archivo existente"),
+    formato: str = Query(..., description="Formato destino (mp3, mp4, mov)"),
 ):
-    try:
-        input_path = VIDEO_DIR / filename
-        if not input_path.exists():
-            raise HTTPException(
-                status_code=404, detail="Archivo de video no encontrado"
-            )
-
-        if formato not in ["mp4", "mov"]:
-            raise HTTPException(
-                status_code=400,
-                detail="Formato no soportado para video (usa mp4 o mov)",
-            )
-
-        output_name = f"{input_path.stem}_converted.{formato}"
-        output_path = OUTPUT_DIR / output_name
-
-        # Ejecutar ffmpeg
-        cmd = [
-            "ffmpeg",
-            "-y",  # sobrescribir si existe
-            "-i",
-            str(input_path),
-            str(output_path),
-        ]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
-
-        return JSONResponse(
-            {
-                "mensaje": "Conversión de video completada ✅",
-                "archivo_entrada": filename,
-                "archivo_salida": output_name,
-                "ruta_salida": str(output_path),
-            }
-        )
-
-    except subprocess.CalledProcessError as e:
+    if tipo not in ["video", "audio"]:
         raise HTTPException(
-            status_code=500, detail=f"Error en FFmpeg: {e.stderr.decode('utf-8')}"
+            status_code=400, detail="Tipo inválido. Usa 'video' o 'audio'."
         )
+
+    try:
+        task_id = manager.start_conversion(filename, formato, tipo)
+        return JSONResponse({"task_id": task_id, "estado": "preparando"})
+    except FileNotFoundError as e:
+        raise HTTPException(status_code=404, detail=str(e))
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
 
 
 # -------------------------------
-# 🎵 Conversión de audios
+# 🔍 Ver estado de una tarea
 # -------------------------------
-@router.api_route("/audio", methods=["GET", "POST"])
-def convertir_audio(
-    filename: str = Query(..., description="Nombre del archivo de audio existente"),
-    formato: str = Query(..., description="Formato de salida (mp3 o wav)"),
-):
-    try:
-        input_path = AUDIO_DIR / filename
-        if not input_path.exists():
-            raise HTTPException(
-                status_code=404, detail="Archivo de audio no encontrado"
-            )
+@router.get("/status/{task_id}")
+def obtener_estado(task_id: str):
+    task = manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    return JSONResponse(task)
 
-        if formato not in ["mp3", "wav"]:
-            raise HTTPException(
-                status_code=400,
-                detail="Formato no soportado para audio (usa mp3 o wav)",
-            )
 
-        output_name = f"{input_path.stem}_converted.{formato}"
-        output_path = OUTPUT_DIR / output_name
+# -------------------------------
+# 📋 Listar todas las tareas
+# -------------------------------
+@router.get("/tasks")
+def listar_tareas():
+    return JSONResponse(manager.list_tasks())
 
-        cmd = ["ffmpeg", "-y", "-i", str(input_path), str(output_path)]
-        subprocess.run(cmd, check=True, stdout=subprocess.PIPE, stderr=subprocess.PIPE)
 
-        return JSONResponse(
-            {
-                "mensaje": "Conversión de audio completada ✅",
-                "archivo_entrada": filename,
-                "archivo_salida": output_name,
-                "ruta_salida": str(output_path),
-            }
-        )
+# -------------------------------
+# 💾 Descargar archivo convertido
+# -------------------------------
+@router.get("/download/{task_id}")
+def descargar_resultado(task_id: str):
+    task = manager.get_task(task_id)
+    if not task:
+        raise HTTPException(status_code=404, detail="Tarea no encontrada")
+    if task["estado"] != "listo":
+        raise HTTPException(status_code=400, detail="La tarea aún no ha finalizado")
 
-    except subprocess.CalledProcessError as e:
-        raise HTTPException(
-            status_code=500, detail=f"Error en FFmpeg: {e.stderr.decode('utf-8')}"
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+    output_path = Path(task["output"])
+    if not output_path.exists():
+        raise HTTPException(status_code=404, detail="Archivo convertido no encontrado")
+
+    return FileResponse(
+        path=output_path,
+        filename=output_path.name,
+        media_type="application/octet-stream",
+    )

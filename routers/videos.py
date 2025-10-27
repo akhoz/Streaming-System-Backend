@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 import os
 
 router = APIRouter()
-CONTENT_DIR = os.path.join(os.path.dirname(__file__), "..", "content")
+CONTENT_DIR = os.path.join(os.path.dirname(__file__), "..", "content", "videos")
 
 
 # 1️⃣ Listar videos disponibles

@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse, JSONResponse
 import os, mimetypes
 
 router = APIRouter()
-AUDIO_DIR = os.path.join(os.path.dirname(__file__), "..", "content", "audios")
+CONTENT_DIR = os.path.join(os.path.dirname(__file__), "..", "content", "audios")
 
 
 # 1️⃣ Listar audios disponibles
