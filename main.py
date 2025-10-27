@@ -1,6 +1,6 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
-from routers import videos
+from routers import videos, audios
 
 app = FastAPI(title="Distributed Multimedia Platform")
 
@@ -14,6 +14,7 @@ app.add_middleware(
 )
 
 app.include_router(videos.router, prefix="/videos", tags=["Videos"])
+app.include_router(audios.router, prefix="/audios", tags=["Audios"])
 
 
 @app.get("/")
