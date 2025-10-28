@@ -10,7 +10,7 @@ router = APIRouter()
 
 # 📂 Directorio base de videos
 VIDEO_DIR = os.path.join(os.path.dirname(__file__), "..", "content", "videos")
-CHUNK_SIZE = 1024 * 1024 * 8  # 8MB por bloque
+CHUNK_SIZE = 1024 * 256  # 256KB - Óptimo para streaming progresivo
 
 
 # ============================
@@ -66,16 +66,17 @@ async def listar_videos():
 
 
 # ============================
-# 🎬 STREAMING DE UN VIDEO
+# 🎬 STREAMING DE UN VIDEO (OPTIMIZADO)
 # ============================
 @router.get(
     "/{filename}",
     responses={
         200: {"description": "Streaming de video"},
+        206: {"description": "Contenido parcial (streaming progresivo)"},
         404: {"model": ErrorResponse},
     },
     summary="Reproduce un video específico por streaming",
-    description="Permite reproducir un video directamente en el navegador con soporte de carga progresiva.",
+    description="Permite reproducir un video directamente en el navegador con soporte de carga progresiva optimizada.",
 )
 async def stream_video(
     filename: str = Path(..., description="Nombre del video"),
@@ -90,45 +91,83 @@ async def stream_video(
     media_type = media_type or "video/mp4"
     range_header = request.headers.get("range")
 
-    # 🧠 Función generadora de chunks (asíncrona)
+    # 🧠 Función generadora de chunks (asíncrona y optimizada)
     async def iterfile(start=0, end=None):
         async with aiofiles.open(file_path, "rb") as f:
             await f.seek(start)
-            remaining = (end - start) if end else (file_size - start)
+            remaining = (end - start + 1) if end else (file_size - start)
+
             while remaining > 0:
-                chunk = await f.read(min(CHUNK_SIZE, remaining))
+                chunk_size = min(CHUNK_SIZE, remaining)
+                chunk = await f.read(chunk_size)
+
                 if not chunk:
                     break
+
                 yield chunk
                 remaining -= len(chunk)
 
     # 🔍 Soporte para Range Requests (carga progresiva)
     if range_header:
         try:
-            range_header = range_header.strip().lower().replace("bytes=", "")
-            start_str, end_str = range_header.split("-")
-            start = int(start_str)
-            end = int(end_str) if end_str else file_size - 1
-        except ValueError:
-            raise HTTPException(status_code=400, detail="Encabezado Range inválido")
+            # Parsear el header Range
+            range_header = range_header.strip().lower()
+            if not range_header.startswith("bytes="):
+                raise HTTPException(status_code=400, detail="Formato de Range inválido")
 
+            range_value = range_header.replace("bytes=", "")
+
+            # Manejar múltiples rangos (tomar solo el primero)
+            if "," in range_value:
+                range_value = range_value.split(",")[0]
+
+            start_str, end_str = range_value.split("-")
+
+            # Calcular start y end
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else file_size - 1
+
+            # Validar rangos
+            if start < 0 or start >= file_size:
+                raise HTTPException(
+                    status_code=416, detail="Rango solicitado fuera de límites"
+                )
+
+            # Asegurar que end no exceda el tamaño del archivo
+            end = min(end, file_size - 1)
+
+            # Calcular el tamaño del contenido a enviar
+            content_length = end - start + 1
+
+        except (ValueError, IndexError):
+            raise HTTPException(status_code=400, detail="Encabezado Range mal formado")
+
+        # Headers optimizados para streaming parcial
         headers = {
             "Content-Range": f"bytes {start}-{end}/{file_size}",
             "Accept-Ranges": "bytes",
+            "Content-Length": str(content_length),
             "Cache-Control": "public, max-age=3600",
-            "Transfer-Encoding": "chunked",
+            "Connection": "keep-alive",
         }
 
         return StreamingResponse(
-            iterfile(start, end + 1),
+            iterfile(start, end),
             status_code=206,
             headers=headers,
             media_type=media_type,
         )
 
-    # 📦 Respuesta completa (sin Range)
-    headers = {"Cache-Control": "public, max-age=3600"}
-    return StreamingResponse(iterfile(), media_type=media_type, headers=headers)
+    # 📦 Respuesta completa (sin Range) - Primera solicitud
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(file_size),
+        "Cache-Control": "public, max-age=3600",
+    }
+
+    return StreamingResponse(
+        iterfile(), media_type=media_type, headers=headers, status_code=200
+    )
 
 
 # ============================

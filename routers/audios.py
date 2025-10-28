@@ -7,6 +7,7 @@ import mimetypes
 
 router = APIRouter()
 AUDIO_DIR = os.path.join(os.path.dirname(__file__), "..", "content", "audios")
+CHUNK_SIZE = 1024 * 256  # 256KB - Óptimo para streaming
 
 
 class AudioItem(BaseModel):
@@ -60,12 +61,13 @@ def listar_audios():
     "/{filename}",
     responses={
         200: {"description": "Streaming de audio"},
+        206: {"description": "Contenido parcial (streaming progresivo)"},
         404: {"model": ErrorResponse},
     },
     summary="Reproduce un audio específico por streaming",
     description="Permite escuchar un audio directamente desde el navegador sin descargarlo completamente.",
 )
-def stream_audio(
+async def stream_audio(
     filename: str = Path(..., description="Nombre del audio"), request: Request = None
 ):
     file_path = os.path.join(AUDIO_DIR, filename)
@@ -81,31 +83,77 @@ def stream_audio(
     def iterfile(start=0, end=None):
         with open(file_path, "rb") as f:
             f.seek(start)
-            remaining = end - start if end else file_size - start
+            remaining = (end - start + 1) if end else (file_size - start)
+
             while remaining > 0:
-                chunk_size = 1024 * 512
-                chunk = f.read(min(chunk_size, remaining))
+                chunk_size = min(CHUNK_SIZE, remaining)
+                chunk = f.read(chunk_size)
+
                 if not chunk:
                     break
+
                 yield chunk
                 remaining -= len(chunk)
 
     if range_header:
-        start, end = range_header.replace("bytes=", "").split("-")
-        start = int(start)
-        end = int(end) if end else file_size - 1
+        try:
+            # Parsear el header Range
+            range_header = range_header.strip().lower()
+            if not range_header.startswith("bytes="):
+                raise HTTPException(status_code=400, detail="Formato de Range inválido")
+
+            range_value = range_header.replace("bytes=", "")
+
+            # Manejar múltiples rangos (tomar solo el primero)
+            if "," in range_value:
+                range_value = range_value.split(",")[0]
+
+            start_str, end_str = range_value.split("-")
+
+            # Calcular start y end
+            start = int(start_str) if start_str else 0
+            end = int(end_str) if end_str else file_size - 1
+
+            # Validar rangos
+            if start < 0 or start >= file_size:
+                raise HTTPException(
+                    status_code=416, detail="Rango solicitado fuera de límites"
+                )
+
+            # Asegurar que end no exceda el tamaño del archivo
+            end = min(end, file_size - 1)
+
+            # Calcular el tamaño del contenido a enviar
+            content_length = end - start + 1
+
+        except (ValueError, IndexError):
+            raise HTTPException(status_code=400, detail="Encabezado Range mal formado")
+
         headers = {
             "Content-Range": f"bytes {start}-{end}/{file_size}",
             "Accept-Ranges": "bytes",
+            "Content-Length": str(content_length),
+            "Cache-Control": "public, max-age=3600",
+            "Connection": "keep-alive",
         }
+
         return StreamingResponse(
-            iterfile(start, end + 1),
+            iterfile(start, end),
             status_code=206,
             headers=headers,
             media_type=media_type,
         )
 
-    return StreamingResponse(iterfile(), media_type=media_type)
+    # Respuesta completa sin Range
+    headers = {
+        "Accept-Ranges": "bytes",
+        "Content-Length": str(file_size),
+        "Cache-Control": "public, max-age=3600",
+    }
+
+    return StreamingResponse(
+        iterfile(), media_type=media_type, headers=headers, status_code=200
+    )
 
 
 @router.get(
@@ -117,7 +165,7 @@ def stream_audio(
     summary="Descarga un audio directamente",
     description="Permite descargar un archivo de audio desde el servidor.",
 )
-def descargar_audio(
+async def descargar_audio(
     filename: str = Path(..., description="Nombre del audio a descargar"),
 ):
     file_path = os.path.join(AUDIO_DIR, filename)
