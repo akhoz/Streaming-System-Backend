@@ -2,8 +2,8 @@ from fastapi.middleware.cors import CORSMiddleware
 from routers import videos, audios, conversion, upload
 from fastapi import FastAPI, Depends, HTTPException, status
 from sqlmodel import select, Session
-from app.db import init_db, get_session
-from app.models import User
+from services.storage.db import init_db, get_session
+from services.storage.model import User
 
 app = FastAPI(title="Distributed Multimedia Platform")
 
