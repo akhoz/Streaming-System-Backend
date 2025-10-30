@@ -4,6 +4,7 @@ from fastapi import FastAPI, Depends, HTTPException, status
 from sqlmodel import select, Session
 from services.storage.db import init_db, get_session
 from services.storage.model import User
+from services.storage.model import LoginIn
 
 app = FastAPI(title="Distributed Multimedia Platform")
 
@@ -50,3 +51,14 @@ def create_user(email: str, password: str, db: Session = Depends(get_session)):
 @app.get("/users")
 def list_users(db: Session = Depends(get_session)):
     return db.exec(select(User)).all()
+
+
+@app.post("/auth/login")
+def login(data: LoginIn, db: Session = Depends(get_session)):
+    user = db.exec(select(User).where(User.email == data.email)).first()
+    if not user or user.password != data.password:
+        # más seguro no revelar cuál de los dos falló
+        raise HTTPException(
+            status_code=status.HTTP_401_UNAUTHORIZED, detail="Credenciales inválidas"
+        )
+    return {"ok": True}
